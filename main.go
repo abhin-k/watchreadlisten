@@ -2,8 +2,8 @@ package main
 
 import (
 	"flag"
-	"fmt"
 	"html/template"
+	"log"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -16,6 +16,7 @@ import (
 
 	"appengine"
 	"appengine/datastore"
+	"appengine/urlfetch"
 )
 
 var (
@@ -85,7 +86,7 @@ func Search(q string, rtClient rt.RottenTomatoes, grClient gr.Goodreads, spClien
 		defer wg.Done()
 		movies, err := rtClient.SearchMovies(q)
 		if err != nil {
-			fmt.Println("ERROR (rt): ", err.Error())
+			log.Println("ERROR (rt): ", err.Error())
 		}
 		for _, mov := range movies {
 			mov.Title = truncate(mov.Title, "...", 60)
@@ -96,7 +97,7 @@ func Search(q string, rtClient rt.RottenTomatoes, grClient gr.Goodreads, spClien
 		defer wg.Done()
 		books, err := grClient.SearchBooks(q)
 		if err != nil {
-			fmt.Println("ERROR (gr): ", err.Error())
+			log.Println("ERROR (gr): ", err.Error())
 		}
 		for i, w := range books.Search.Works {
 			w.BestBook.Title = truncate(w.BestBook.Title, "...", 60)
@@ -108,7 +109,7 @@ func Search(q string, rtClient rt.RottenTomatoes, grClient gr.Goodreads, spClien
 		defer wg.Done()
 		albums, err := spClient.SearchAlbums(q)
 		if err != nil {
-			fmt.Println("ERROR (sp): ", err.Error())
+			log.Println("ERROR (sp): ", err.Error())
 		}
 		for i, a := range albums.Albums {
 			a.Name = truncate(a.Name, "...", 60)
@@ -140,9 +141,11 @@ func SearchHandler(w http.ResponseWriter, r *http.Request, query string) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	rtClient := rt.RottenTomatoes{rtKey}
-	grClient := gr.Goodreads{grKey, grSecret}
-	spClient := sp.Spotify{}
+	c := appengine.NewContext(r)
+	client := urlfetch.Client(c)
+	rtClient := rt.RottenTomatoes{Client: *client, Key: rtKey}
+	grClient := gr.Goodreads{Client: *client, Key: grKey, Secret: grSecret}
+	spClient := sp.Spotify{Client: *client}
 	m, g, s := Search(query, rtClient, grClient, spClient)
 	// Since spotify: URIs are not trusted, have to pass a
 	// URL function to the template to use in hrefs
@@ -175,32 +178,32 @@ func SaveHandler(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/list", http.StatusFound)
 }
 
-func ListHandler(w http.ResponseWriter, r *http.Request) {
-	e, err := readEntries()
-	if err != nil {
-		http.Error(w, fmt.Sprintf("Error reading entries: %v", err), http.StatusInternalServerError)
-		return
-	}
-	m := buildEntryMap(e)
-	// Create and parse Template
-	t, err := template.New("list.html").ParseFiles("templates/list.html", "templates/base.html")
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	// Render the template
-	t.ExecuteTemplate(w, "base", map[string]interface{}{"Entries": m, "Page": "list"})
-}
-
-func RemoveHandler(w http.ResponseWriter, r *http.Request) {
-	i := r.FormValue("id")
-	err := removeEntry(i)
-	if err != nil {
-		http.Error(w, fmt.Sprintf("Error reading entries: %v", err), http.StatusInternalServerError)
-		return
-	}
-	http.Redirect(w, r, "/list", http.StatusFound)
-}
+//func ListHandler(w http.ResponseWriter, r *http.Request) {
+//	e, err := readEntries()
+//	if err != nil {
+//		http.Error(w, fmt.Sprintf("Error reading entries: %v", err), http.StatusInternalServerError)
+//		return
+//	}
+//	m := buildEntryMap(e)
+//	// Create and parse Template
+//	t, err := template.New("list.html").ParseFiles("templates/list.html", "templates/base.html")
+//	if err != nil {
+//		http.Error(w, err.Error(), http.StatusInternalServerError)
+//		return
+//	}
+//	// Render the template
+//	t.ExecuteTemplate(w, "base", map[string]interface{}{"Entries": m, "Page": "list"})
+//}
+//
+//func RemoveHandler(w http.ResponseWriter, r *http.Request) {
+//	i := r.FormValue("id")
+//	err := removeEntry(i)
+//	if err != nil {
+//		http.Error(w, fmt.Sprintf("Error reading entries: %v", err), http.StatusInternalServerError)
+//		return
+//	}
+//	http.Redirect(w, r, "/list", http.StatusFound)
+//}
 
 var validSearchPath = regexp.MustCompile("^/search/(.*)$")
 
@@ -217,12 +220,12 @@ func makeSearchHandler(fn func(http.ResponseWriter, *http.Request, string)) http
 
 func init() {
 	http.HandleFunc("/", HomeHandler)
+	http.HandleFunc("/search/", makeSearchHandler(SearchHandler))
 }
 
 //func main() {
 //	flag.Parse()
 //	http.HandleFunc("/", HomeHandler)
-//	http.HandleFunc("/search/", makeSearchHandler(SearchHandler))
 //	http.HandleFunc("/save", SaveHandler)
 //	http.HandleFunc("/list", ListHandler)
 //	http.HandleFunc("/remove", RemoveHandler)
