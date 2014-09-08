@@ -1,23 +1,21 @@
 package main
 
 import (
-	"encoding/json"
 	"flag"
 	"fmt"
 	"html/template"
-	"io/ioutil"
-	"log"
 	"net/http"
 	"net/url"
-	"os"
 	"regexp"
-	"strings"
 	"sync"
 
 	"github.com/kylelemons/go-gypsy/yaml"
 	"github.com/shawnps/gr"
 	"github.com/shawnps/rt"
 	"github.com/shawnps/sp"
+
+	"appengine"
+	"appengine/datastore"
 )
 
 var (
@@ -55,109 +53,28 @@ func parseYAML() (rtKey, grKey, grSecret string, err error) {
 	return rtKey, grKey, grSecret, nil
 }
 
-func writeJSON(e []Entry, file string) error {
-	b, err := json.Marshal(e)
-	if err != nil {
-		return err
-	}
-	err = ioutil.WriteFile(file, b, 0755)
-	if err != nil {
-		return err
-	}
-
-	return nil
+func entryKey(c appengine.Context) *datastore.Key {
+	return datastore.NewKey(c, "Entry", "default_entry", 0, nil)
 }
 
-func buildEntryMap(entries []Entry) map[string][]Entry {
-	m := map[string][]Entry{}
-	for _, e := range entries {
-		k := strings.Title(e.Type)
-		m[k] = append(m[k], e)
-	}
-	return m
-}
-
-func readEntries() ([]Entry, error) {
-	var e []Entry
-	b, err := ioutil.ReadFile(*entriesPath)
-	if err != nil {
-		return e, err
-	}
-	if len(b) == 0 {
-		return []Entry{}, nil
-	}
-	err = json.Unmarshal(b, &e)
-	if err != nil {
-		return e, err
-	}
-
-	return e, nil
-}
-
-func uuid() (string, error) {
-	f, err := os.Open("/dev/urandom")
-	if err != nil {
-		return "", err
-	}
-	b := make([]byte, 16)
-	f.Read(b)
-	f.Close()
-	uuid := fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:])
-
-	return uuid, nil
-}
-
-func insertEntry(title, link, mediaType, imageURL string) error {
-	if _, err := os.Stat(*entriesPath); os.IsNotExist(err) {
-		_, err := os.Create(*entriesPath)
-		if err != nil {
-			return err
-		}
-		err = writeJSON([]Entry{}, *entriesPath)
-		if err != nil {
-			return err
-		}
-	}
-	e, err := readEntries()
-	if err != nil {
-		return err
-	}
+func insertEntry(title, link, mediaType, imageURL string, r *http.Request) error {
 	url, err := url.Parse(imageURL)
 	if err != nil {
 		return err
 	}
-	id, err := uuid()
-	if err != nil {
-		return err
-	}
-	entry := Entry{id, title, link, *url, mediaType}
-	e = append(e, entry)
-	err = writeJSON(e, *entriesPath)
-	if err != nil {
-		return err
-	}
-	return nil
-}
+	e := Entry{Title: title, Link: link, ImageURL: *url, Type: mediaType}
+	c := appengine.NewContext(r)
+	key := datastore.NewIncompleteKey(c, "Entry", entryKey(c))
+	_, err = datastore.Put(c, key, &e)
 
-func removeEntry(id string) error {
-	entries, err := readEntries()
-	if err != nil {
-		return err
-	}
-	for i, e := range entries {
-		if e.Id == id {
-			entries = append(entries[:i], entries[i+1:]...)
-		}
-	}
-	return writeJSON(entries, *entriesPath)
+	return err
 }
 
 func truncate(s, suf string, l int) string {
 	if len(s) < l {
 		return s
-	} else {
-		return s[:l] + suf
 	}
+	return s[:l] + suf
 }
 
 // Search Rotten Tomatoes, Goodreads, and Spotify.
@@ -250,7 +167,7 @@ func SaveHandler(w http.ResponseWriter, r *http.Request) {
 	l := r.FormValue("link")
 	m := r.FormValue("media_type")
 	url := r.FormValue("image_url")
-	err := insertEntry(t, l, m, url)
+	err := insertEntry(t, l, m, url, r)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -298,14 +215,18 @@ func makeSearchHandler(fn func(http.ResponseWriter, *http.Request, string)) http
 	}
 }
 
-func main() {
-	flag.Parse()
+func init() {
 	http.HandleFunc("/", HomeHandler)
-	http.HandleFunc("/search/", makeSearchHandler(SearchHandler))
-	http.HandleFunc("/save", SaveHandler)
-	http.HandleFunc("/list", ListHandler)
-	http.HandleFunc("/remove", RemoveHandler)
-	fmt.Println("Running on localhost:" + *port)
-
-	log.Fatal(http.ListenAndServe(":"+*port, nil))
 }
+
+//func main() {
+//	flag.Parse()
+//	http.HandleFunc("/", HomeHandler)
+//	http.HandleFunc("/search/", makeSearchHandler(SearchHandler))
+//	http.HandleFunc("/save", SaveHandler)
+//	http.HandleFunc("/list", ListHandler)
+//	http.HandleFunc("/remove", RemoveHandler)
+//	fmt.Println("Running on localhost:" + *port)
+//
+//	log.Fatal(http.ListenAndServe(":"+*port, nil))
+//}
