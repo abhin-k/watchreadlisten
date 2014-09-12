@@ -5,7 +5,6 @@ import (
 	"html/template"
 	"log"
 	"net/http"
-	"net/url"
 	"regexp"
 	"sync"
 
@@ -29,7 +28,7 @@ type Entry struct {
 	Id       string
 	Title    string
 	Link     string
-	ImageURL url.URL
+	ImageURL string
 	Type     string
 }
 
@@ -59,14 +58,10 @@ func entryKey(c appengine.Context) *datastore.Key {
 }
 
 func insertEntry(title, link, mediaType, imageURL string, r *http.Request) error {
-	url, err := url.Parse(imageURL)
-	if err != nil {
-		return err
-	}
-	e := Entry{Title: title, Link: link, ImageURL: *url, Type: mediaType}
+	e := Entry{Title: title, Link: link, ImageURL: imageURL, Type: mediaType}
 	c := appengine.NewContext(r)
 	key := datastore.NewIncompleteKey(c, "Entry", entryKey(c))
-	_, err = datastore.Put(c, key, &e)
+	_, err := datastore.Put(c, key, &e)
 
 	return err
 }
@@ -221,12 +216,11 @@ func makeSearchHandler(fn func(http.ResponseWriter, *http.Request, string)) http
 func init() {
 	http.HandleFunc("/", HomeHandler)
 	http.HandleFunc("/search/", makeSearchHandler(SearchHandler))
+	http.HandleFunc("/save", SaveHandler)
 }
 
 //func main() {
 //	flag.Parse()
-//	http.HandleFunc("/", HomeHandler)
-//	http.HandleFunc("/save", SaveHandler)
 //	http.HandleFunc("/list", ListHandler)
 //	http.HandleFunc("/remove", RemoveHandler)
 //	fmt.Println("Running on localhost:" + *port)
