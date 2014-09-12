@@ -16,6 +16,7 @@ import (
 	"appengine"
 	"appengine/datastore"
 	"appengine/urlfetch"
+	"appengine/user"
 )
 
 var (
@@ -74,12 +75,12 @@ func truncate(s, suf string, l int) string {
 }
 
 // Search Rotten Tomatoes, Goodreads, and Spotify.
-func Search(q string, rtClient rt.RottenTomatoes, grClient gr.Goodreads, spClient sp.Spotify) (m []rt.Movie, g gr.GoodreadsResponse, s sp.SearchAlbumsResponse) {
+func Search(q string, rt rt.RottenTomatoes, gr gr.Goodreads, sp sp.Spotify) (m []rt.Movie, g gr.GoodreadsResponse, s sp.SearchAlbumsResponse) {
 	var wg sync.WaitGroup
 	wg.Add(3)
 	go func(q string) {
 		defer wg.Done()
-		movies, err := rtClient.SearchMovies(q)
+		movies, err := rt.SearchMovies(q)
 		if err != nil {
 			log.Println("ERROR (rt): ", err.Error())
 		}
@@ -90,7 +91,7 @@ func Search(q string, rtClient rt.RottenTomatoes, grClient gr.Goodreads, spClien
 	}(q)
 	go func(q string) {
 		defer wg.Done()
-		books, err := grClient.SearchBooks(q)
+		books, err := gr.SearchBooks(q)
 		if err != nil {
 			log.Println("ERROR (gr): ", err.Error())
 		}
@@ -102,7 +103,7 @@ func Search(q string, rtClient rt.RottenTomatoes, grClient gr.Goodreads, spClien
 	}(q)
 	go func(q string) {
 		defer wg.Done()
-		albums, err := spClient.SearchAlbums(q)
+		albums, err := sp.SearchAlbums(q)
 		if err != nil {
 			log.Println("ERROR (sp): ", err.Error())
 		}
@@ -117,13 +118,31 @@ func Search(q string, rtClient rt.RottenTomatoes, grClient gr.Goodreads, spClien
 }
 
 func HomeHandler(w http.ResponseWriter, r *http.Request) {
+	c := appengine.NewContext(r)
+	u := user.Current(c)
+	if u == nil {
+		url, err := user.LoginURL(c, r.URL.String())
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Location", url)
+		w.WriteHeader(http.StatusFound)
+		return
+	}
 	t, err := template.New("index.html").ParseFiles("templates/index.html", "templates/base.html")
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+	url, err := user.LogoutURL(c, "/")
+	if err != nil {
+		log.Println("ERROR: ", err)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
 	// Render the template
-	err = t.ExecuteTemplate(w, "base", map[string]interface{}{"Page": "home"})
+	err = t.ExecuteTemplate(w, "base", map[string]interface{}{"Page": "home", "LogoutURL": url})
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -131,17 +150,17 @@ func HomeHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func SearchHandler(w http.ResponseWriter, r *http.Request, query string) {
-	rtKey, grKey, grSecret, err := parseYAML()
+	rtk, grk, grs, err := parseYAML()
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 	c := appengine.NewContext(r)
 	client := urlfetch.Client(c)
-	rtClient := rt.RottenTomatoes{Client: *client, Key: rtKey}
-	grClient := gr.Goodreads{Client: *client, Key: grKey, Secret: grSecret}
-	spClient := sp.Spotify{Client: *client}
-	m, g, s := Search(query, rtClient, grClient, spClient)
+	rt := rt.RottenTomatoes{Client: *client, Key: rtk}
+	gr := gr.Goodreads{Client: *client, Key: grk, Secret: grs}
+	sp := sp.Spotify{Client: *client}
+	m, g, s := Search(query, rt, gr, sp)
 	// Since spotify: URIs are not trusted, have to pass a
 	// URL function to the template to use in hrefs
 	funcMap := template.FuncMap{

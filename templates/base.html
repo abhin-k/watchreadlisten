@@ -34,6 +34,7 @@
             <li{{if eq .Page "list"}} class="active"{{end}}>
               <a href="/list">List</a>
             </li>
+            <li><a href="/{{.LogoutURL}}">Logout</a></li>
             {{else}}
             <li><a href="/">Home</a></li>
             <li><a href="/list">List</a></li>
